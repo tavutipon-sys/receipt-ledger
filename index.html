@@ -88,7 +88,7 @@
           <div class="panel-heading">
             <div>
               <h2 id="entryTitle">確認して登録</h2>
-              <p>日付、品目、値段、分類を確認します。</p>
+              <p>日付、お店、品目、値段、分類を確認します。</p>
             </div>
             <span class="total-chip" id="pendingTotal">0円</span>
           </div>
@@ -97,6 +97,10 @@
             <label>
               <span>購入日</span>
               <input id="manualDate" type="date" required>
+            </label>
+            <label>
+              <span>お店</span>
+              <input id="manualStore" type="text" autocomplete="off" placeholder="例: スーパー">
             </label>
             <label>
               <span>購入品目名</span>
@@ -125,6 +129,65 @@
           </div>
           <div class="pending-list" id="pendingList" aria-live="polite"></div>
         </section>
+      </section>
+
+      <section class="analytics-panel" aria-labelledby="analyticsTitle">
+        <div class="panel-heading analytics-heading">
+          <div>
+            <h2 id="analyticsTitle">支出グラフ</h2>
+            <p>推移、内訳、品目別の支出を見ます。</p>
+          </div>
+          <div class="analytics-controls">
+            <label>
+              <span>推移</span>
+              <select id="trendMode">
+                <option value="monthly">月ごと</option>
+                <option value="yearly">年ごと</option>
+              </select>
+            </label>
+            <label>
+              <span>対象年</span>
+              <select id="trendYear"></select>
+            </label>
+            <label>
+              <span>内訳</span>
+              <select id="pieMode">
+                <option value="category">分類別</option>
+                <option value="item">品目別</option>
+                <option value="store">お店別</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="analytics-grid">
+          <section class="chart-section chart-section-wide" aria-labelledby="trendChartTitle">
+            <div class="chart-title">
+              <h3 id="trendChartTitle">支出推移</h3>
+              <span id="trendChartTotal">0円</span>
+            </div>
+            <div class="svg-chart" id="trendChart"></div>
+            <div class="chart-legend">
+              <span><i class="legend-swatch bar-swatch"></i>支出</span>
+              <span><i class="legend-swatch line-swatch"></i>累計</span>
+            </div>
+          </section>
+
+          <section class="chart-section" aria-labelledby="pieChartTitle">
+            <div class="chart-title">
+              <h3 id="pieChartTitle">内訳</h3>
+            </div>
+            <div class="svg-chart pie-chart" id="pieChart"></div>
+            <div class="pie-legend" id="pieLegend"></div>
+          </section>
+
+          <section class="chart-section" aria-labelledby="itemRankingTitle">
+            <div class="chart-title">
+              <h3 id="itemRankingTitle">品目別支出</h3>
+            </div>
+            <div class="ranking-list" id="itemRanking"></div>
+          </section>
+        </div>
       </section>
 
       <section class="ledger-panel" aria-labelledby="ledgerTitle">
@@ -156,7 +219,7 @@
           </label>
           <label>
             <span>検索</span>
-            <input id="filterKeyword" type="search" placeholder="品目名">
+            <input id="filterKeyword" type="search" placeholder="品目名・お店">
           </label>
           <label>
             <span>並び順</span>
@@ -167,6 +230,7 @@
               <option value="price-desc">値段 高い順</option>
               <option value="price-asc">値段 安い順</option>
               <option value="name-asc">品目名順</option>
+              <option value="store-asc">お店順</option>
             </select>
           </label>
           <button type="button" id="resetFiltersButton" aria-label="絞り込みをリセット" title="絞り込みをリセット">

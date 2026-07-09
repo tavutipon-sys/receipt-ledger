@@ -164,6 +164,17 @@
   ];
 
   const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const chartPalette = [
+    "#16756f",
+    "#d9604c",
+    "#2878a8",
+    "#c9851f",
+    "#7c5ab5",
+    "#6b7f31",
+    "#b44d82",
+    "#8b6842",
+    "#707771",
+  ];
 
   const state = {
     records: loadRecords(),
@@ -205,6 +216,7 @@
       "clearScanButton",
       "manualEntryForm",
       "manualDate",
+      "manualStore",
       "manualName",
       "manualPrice",
       "manualCategory",
@@ -220,6 +232,14 @@
       "sortMode",
       "resetFiltersButton",
       "ledgerList",
+      "trendMode",
+      "trendYear",
+      "pieMode",
+      "trendChart",
+      "trendChartTotal",
+      "pieChart",
+      "pieLegend",
+      "itemRanking",
     ].forEach((id) => {
       dom[id] = document.getElementById(id);
     });
@@ -253,6 +273,9 @@
     ].forEach((control) => control.addEventListener("input", renderLedger));
 
     dom.resetFiltersButton.addEventListener("click", resetFilters);
+    dom.trendMode.addEventListener("input", renderLedger);
+    dom.trendYear.addEventListener("input", renderLedger);
+    dom.pieMode.addEventListener("input", renderLedger);
   }
 
   function populateCategorySelects() {
@@ -456,6 +479,7 @@
 
   function addManualPending(event) {
     event.preventDefault();
+    const store = dom.manualStore.value.trim();
     const name = dom.manualName.value.trim();
     const price = Number(dom.manualPrice.value);
 
@@ -467,14 +491,16 @@
     state.pending.push({
       id: makeId(),
       date: dom.manualDate.value || todayString(),
+      store,
       name,
       price: Math.round(price),
       category: dom.manualCategory.value || guessCategory(name),
     });
 
+    dom.manualStore.value = "";
     dom.manualName.value = "";
     dom.manualPrice.value = "";
-    dom.manualName.focus();
+    dom.manualStore.focus();
     renderPending();
     setStatus("候補追加");
   }
@@ -490,6 +516,7 @@
       .map((item) => ({
         id: makeId(),
         date: item.date || todayString(),
+        store: String(item.store || "").trim(),
         name: item.name.trim(),
         price: Math.round(Number(item.price)),
         category: categoryById.has(item.category) ? item.category : "other",
@@ -507,11 +534,12 @@
   function parseReceiptText(text) {
     const normalized = normalizeText(text);
     const date = extractDate(normalized) || todayString();
+    const store = extractStoreName(normalized);
     const seen = new Set();
 
     return normalized
       .split(/\r?\n/)
-      .map((line) => parseItemLine(line, date))
+      .map((line) => parseItemLine(line, date, store))
       .filter(Boolean)
       .filter((item) => {
         const key = `${item.name}|${item.price}`;
@@ -524,7 +552,7 @@
       .slice(0, 40);
   }
 
-  function parseItemLine(rawLine, date) {
+  function parseItemLine(rawLine, date, store) {
     const line = normalizeText(rawLine)
       .replace(/[|｜]/g, " ")
       .replace(/\s+/g, " ")
@@ -547,17 +575,58 @@
     let name = line.slice(0, priceMatch.index).trim();
     name = cleanupItemName(name);
 
-    if (!name || name.length < 2 || /^\d+$/.test(name) || shouldSkipReceiptLine(name)) {
+    if (!name || /^\d+$/.test(name) || shouldSkipReceiptLine(name)) {
       return null;
     }
 
     return {
       id: makeId(),
       date,
+      store,
       name,
       price,
       category: guessCategory(name),
     };
+  }
+
+  function extractStoreName(text) {
+    const lines = normalizeText(text)
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    for (const line of lines.slice(0, 10)) {
+      const labeled = line.match(/(?:店名|店舗名|利用店舗|ご利用店|販売店)\s*[:：]?\s*(.+)$/);
+      if (labeled) {
+        const store = cleanupStoreName(labeled[1]);
+        if (store) {
+          return store;
+        }
+      }
+
+      if (
+        line.length < 2 ||
+        line.length > 32 ||
+        looksLikeDateOrTime(line) ||
+        /(?:[¥￥]\s*)?[0-9][0-9,]{0,8}(?:\s*円)?\s*$/.test(line) ||
+        shouldSkipReceiptLine(line) ||
+        /住所|所在地|〒|http|www\.|@|No\.|NO\.|レシート/i.test(line)
+      ) {
+        continue;
+      }
+
+      return cleanupStoreName(line);
+    }
+
+    return "";
+  }
+
+  function cleanupStoreName(value) {
+    return normalizeText(value)
+      .replace(/^[*＊・\-\s]+/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 32);
   }
 
   function extractDate(text) {
@@ -611,7 +680,7 @@
     return String(value || "")
       .normalize("NFKC")
       .replace(/[，、]/g, ",")
-      .replace(/[−ー‐]/g, "-");
+      .replace(/[−‐‑‒–—―]/g, "-");
   }
 
   function cleanupItemName(name) {
@@ -662,6 +731,7 @@
       row.dataset.id = item.id;
 
       row.appendChild(createInput("date", item.date, "date"));
+      row.appendChild(createInput("store", item.store || "", "text"));
       row.appendChild(createInput("name", item.name, "text"));
       row.appendChild(createInput("price", String(item.price), "number"));
       row.appendChild(createCategorySelect(item.category));
@@ -678,6 +748,7 @@
     const total = sumPrices(visibleRecords);
     dom.visibleTotal.textContent = formatYen(total);
     renderSummary(visibleRecords);
+    renderAnalytics(visibleRecords);
     renderLedgerRows(visibleRecords);
     renderIcons();
   }
@@ -719,6 +790,350 @@
     }
   }
 
+  function renderAnalytics(records) {
+    syncTrendYearOptions(records);
+    renderTrendChart(records);
+    renderPieChart(records);
+    renderItemRanking(records);
+  }
+
+  function syncTrendYearOptions(records) {
+    const selected = dom.trendYear.value;
+    const currentYear = String(new Date().getFullYear());
+    const years = Array.from(
+      new Set(
+        records
+          .map((record) => String(record.date || "").slice(0, 4))
+          .filter((year) => /^\d{4}$/.test(year))
+          .concat(currentYear)
+      )
+    ).sort((a, b) => b.localeCompare(a));
+
+    dom.trendYear.replaceChildren();
+    years.forEach((year) => {
+      const option = document.createElement("option");
+      option.value = year;
+      option.textContent = `${year}年`;
+      dom.trendYear.appendChild(option);
+    });
+
+    dom.trendYear.value = years.includes(selected) ? selected : currentYear;
+    if (!dom.trendYear.value && years.length) {
+      dom.trendYear.value = years[0];
+    }
+    dom.trendYear.disabled = dom.trendMode.value === "yearly";
+  }
+
+  function renderTrendChart(records) {
+    const mode = dom.trendMode.value;
+    const buckets = mode === "yearly" ? buildYearlyBuckets(records) : buildMonthlyBuckets(records);
+    const total = buckets.reduce((sum, bucket) => sum + bucket.value, 0);
+    const cumulative = [];
+
+    buckets.reduce((sum, bucket, index) => {
+      const next = sum + bucket.value;
+      cumulative[index] = next;
+      return next;
+    }, 0);
+
+    dom.trendChartTotal.textContent = formatYen(total);
+
+    if (!total) {
+      setEmptyChart(dom.trendChart, "表示できる支出がありません。");
+      return;
+    }
+
+    dom.trendChart.innerHTML = buildTrendSvg(
+      buckets.map((bucket) => bucket.label),
+      buckets.map((bucket) => bucket.value),
+      cumulative
+    );
+  }
+
+  function buildMonthlyBuckets(records) {
+    const year = dom.trendYear.value || String(new Date().getFullYear());
+    const values = Array.from({ length: 12 }, (_, index) => ({
+      key: `${year}-${String(index + 1).padStart(2, "0")}`,
+      label: `${index + 1}月`,
+      value: 0,
+    }));
+
+    records.forEach((record) => {
+      const month = String(record.date || "").slice(0, 7);
+      const bucket = values.find((item) => item.key === month);
+      if (bucket) {
+        bucket.value += Number(record.price) || 0;
+      }
+    });
+
+    return values;
+  }
+
+  function buildYearlyBuckets(records) {
+    const currentYear = new Date().getFullYear();
+    const years = Array.from(
+      new Set(
+        records
+          .map((record) => Number(String(record.date || "").slice(0, 4)))
+          .filter((year) => Number.isInteger(year))
+          .concat(currentYear)
+      )
+    ).sort((a, b) => a - b);
+
+    const start = Math.min(...years);
+    const end = Math.max(...years);
+    const buckets = [];
+    for (let year = start; year <= end; year += 1) {
+      buckets.push({
+        key: String(year),
+        label: `${year}`,
+        value: 0,
+      });
+    }
+
+    records.forEach((record) => {
+      const year = String(record.date || "").slice(0, 4);
+      const bucket = buckets.find((item) => item.key === year);
+      if (bucket) {
+        bucket.value += Number(record.price) || 0;
+      }
+    });
+
+    return buckets;
+  }
+
+  function buildTrendSvg(labels, values, cumulativeValues) {
+    const width = 760;
+    const height = 320;
+    const left = 58;
+    const right = 26;
+    const top = 28;
+    const bottom = 46;
+    const chartWidth = width - left - right;
+    const chartHeight = height - top - bottom;
+    const maxBar = Math.max(...values, 1);
+    const maxLine = Math.max(...cumulativeValues, 1);
+    const slot = chartWidth / values.length;
+    const barWidth = Math.max(12, Math.min(34, slot * 0.56));
+
+    const grid = [0, 0.25, 0.5, 0.75, 1]
+      .map((ratio) => {
+        const y = top + chartHeight - chartHeight * ratio;
+        const label = formatCompactYen(maxBar * ratio);
+        return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="#ded8ce" stroke-width="1"/><text x="${left - 8}" y="${y + 4}" text-anchor="end" fill="#646a60" font-size="12">${label}</text>`;
+      })
+      .join("");
+
+    const bars = values
+      .map((value, index) => {
+        const x = left + index * slot + (slot - barWidth) / 2;
+        const barHeight = (value / maxBar) * chartHeight;
+        const y = top + chartHeight - barHeight;
+        return `<rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(1, barHeight)}" rx="5" fill="#16756f"><title>${labels[index]} ${formatYen(value)}</title></rect>`;
+      })
+      .join("");
+
+    const points = cumulativeValues.map((value, index) => {
+      const x = left + index * slot + slot / 2;
+      const y = top + chartHeight - (value / maxLine) * chartHeight;
+      return { x, y, value };
+    });
+    const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+    const line = `<path d="${linePath}" fill="none" stroke="#d9604c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const dots = points
+      .map(
+        (point, index) =>
+          `<circle cx="${point.x}" cy="${point.y}" r="4.5" fill="#fffdf8" stroke="#d9604c" stroke-width="3"><title>${labels[index]} 累計 ${formatYen(point.value)}</title></circle>`
+      )
+      .join("");
+
+    const xLabels = labels
+      .map((label, index) => {
+        const x = left + index * slot + slot / 2;
+        return `<text x="${x}" y="${height - 18}" text-anchor="middle" fill="#646a60" font-size="12">${escapeHtml(label)}</text>`;
+      })
+      .join("");
+
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="支出推移グラフ">
+      <rect width="${width}" height="${height}" fill="transparent"/>
+      ${grid}
+      ${bars}
+      ${line}
+      ${dots}
+      <line x1="${left}" y1="${top + chartHeight}" x2="${width - right}" y2="${top + chartHeight}" stroke="#c9c0b4" stroke-width="1.5"/>
+      ${xLabels}
+    </svg>`;
+  }
+
+  function renderPieChart(records) {
+    const mode = dom.pieMode.value;
+    const aggregate = aggregateForPie(records, mode);
+
+    dom.pieLegend.replaceChildren();
+    if (!aggregate.length) {
+      setEmptyChart(dom.pieChart, "表示できる内訳がありません。");
+      return;
+    }
+
+    const total = aggregate.reduce((sum, item) => sum + item.value, 0);
+    const topItems = aggregate.slice(0, 6);
+    const otherTotal = aggregate.slice(6).reduce((sum, item) => sum + item.value, 0);
+    const items = otherTotal
+      ? topItems.concat([{ key: "other-group", label: "その他", value: otherTotal, color: "#707771" }])
+      : topItems;
+
+    dom.pieChart.innerHTML = buildPieSvg(items, total);
+
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "legend-row";
+
+      const label = document.createElement("span");
+      label.className = "legend-label";
+      const swatch = document.createElement("i");
+      swatch.className = "legend-swatch";
+      swatch.style.backgroundColor = item.color;
+      const name = document.createElement("span");
+      name.textContent = item.label;
+      label.append(swatch, name);
+
+      const value = document.createElement("span");
+      value.className = "legend-value";
+      value.textContent = `${formatYen(item.value)} / ${Math.round((item.value / total) * 100)}%`;
+
+      row.append(label, value);
+      dom.pieLegend.appendChild(row);
+    });
+  }
+
+  function aggregateForPie(records, mode) {
+    if (mode === "category") {
+      return categories
+        .map((category) => ({
+          key: category.id,
+          label: category.label,
+          color: category.color,
+          value: records
+            .filter((record) => record.category === category.id)
+            .reduce((sum, record) => sum + (Number(record.price) || 0), 0),
+        }))
+        .filter((item) => item.value > 0)
+        .sort((a, b) => b.value - a.value);
+    }
+
+    const keyName = mode === "store" ? "store" : "name";
+    return aggregateBy(records, (record) => {
+      const label = String(record[keyName] || "").trim();
+      return label || (mode === "store" ? "店名なし" : "品目名なし");
+    }).map((item, index) => ({
+      ...item,
+      color: chartPalette[index % chartPalette.length],
+    }));
+  }
+
+  function buildPieSvg(items, total) {
+    const size = 260;
+    const center = size / 2;
+    const radius = 104;
+    let start = -Math.PI / 2;
+    const slices = items
+      .map((item) => {
+        const angle = (item.value / total) * Math.PI * 2;
+        const end = start + angle;
+        const path = angle >= Math.PI * 2 - 0.0001
+          ? `<circle cx="${center}" cy="${center}" r="${radius}" fill="${item.color}"><title>${escapeHtml(item.label)} ${formatYen(item.value)}</title></circle>`
+          : `<path d="${describeArcSlice(center, center, radius, start, end)}" fill="${item.color}"><title>${escapeHtml(item.label)} ${formatYen(item.value)}</title></path>`;
+        start = end;
+        return path;
+      })
+      .join("");
+
+    return `<svg viewBox="0 0 ${size} ${size}" role="img" aria-label="支出内訳円グラフ">
+      ${slices}
+      <circle cx="${center}" cy="${center}" r="54" fill="#fffdf8"/>
+      <text x="${center}" y="${center - 5}" text-anchor="middle" fill="#646a60" font-size="13" font-weight="700">合計</text>
+      <text x="${center}" y="${center + 18}" text-anchor="middle" fill="#20231f" font-size="18" font-weight="800">${formatCompactYen(total)}</text>
+    </svg>`;
+  }
+
+  function describeArcSlice(cx, cy, radius, start, end) {
+    const startPoint = polarToCartesian(cx, cy, radius, start);
+    const endPoint = polarToCartesian(cx, cy, radius, end);
+    const largeArc = end - start > Math.PI ? 1 : 0;
+    return [
+      `M ${cx} ${cy}`,
+      `L ${startPoint.x} ${startPoint.y}`,
+      `A ${radius} ${radius} 0 ${largeArc} 1 ${endPoint.x} ${endPoint.y}`,
+      "Z",
+    ].join(" ");
+  }
+
+  function polarToCartesian(cx, cy, radius, angle) {
+    return {
+      x: cx + radius * Math.cos(angle),
+      y: cy + radius * Math.sin(angle),
+    };
+  }
+
+  function renderItemRanking(records) {
+    dom.itemRanking.replaceChildren();
+    const items = aggregateBy(records, (record) => String(record.name || "").trim()).slice(0, 8);
+    if (!items.length) {
+      dom.itemRanking.appendChild(createEmptyState("表示できる品目がありません。"));
+      return;
+    }
+
+    const max = Math.max(...items.map((item) => item.value), 1);
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "ranking-row";
+
+      const line = document.createElement("div");
+      line.className = "ranking-line";
+      const name = document.createElement("span");
+      name.className = "ranking-name";
+      name.textContent = item.label;
+      const value = document.createElement("span");
+      value.className = "ranking-value";
+      value.textContent = formatYen(item.value);
+      line.append(name, value);
+
+      const bar = document.createElement("div");
+      bar.className = "ranking-bar";
+      const fill = document.createElement("span");
+      fill.style.width = `${Math.max(4, Math.round((item.value / max) * 100))}%`;
+      bar.appendChild(fill);
+
+      row.append(line, bar);
+      dom.itemRanking.appendChild(row);
+    });
+  }
+
+  function aggregateBy(records, getLabel) {
+    const totals = new Map();
+    records.forEach((record) => {
+      const label = getLabel(record);
+      if (!label) {
+        return;
+      }
+      totals.set(label, (totals.get(label) || 0) + (Number(record.price) || 0));
+    });
+
+    return Array.from(totals, ([label, value]) => ({
+      key: label,
+      label,
+      value,
+    })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "ja"));
+  }
+
+  function setEmptyChart(target, message) {
+    target.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "chart-empty";
+    empty.textContent = message;
+    target.appendChild(empty);
+  }
+
   function renderLedgerRows(records) {
     dom.ledgerList.replaceChildren();
 
@@ -741,6 +1156,7 @@
       row.dataset.id = record.id;
 
       row.appendChild(createInput("date", record.date, "date"));
+      row.appendChild(createInput("store", record.store || "", "text"));
       row.appendChild(createInput("name", record.name, "text"));
       row.appendChild(createCategorySelect(record.category));
       row.appendChild(createInput("price", String(record.price), "number"));
@@ -902,7 +1318,8 @@
       if (category !== "all" && record.category !== category) {
         return false;
       }
-      if (keyword && !normalizeText(record.name).toLowerCase().includes(keyword)) {
+      const searchable = `${record.name || ""} ${record.store || ""}`.toLowerCase();
+      if (keyword && !normalizeText(searchable).includes(keyword)) {
         return false;
       }
       return true;
@@ -930,6 +1347,12 @@
         return a.price - b.price || b.date.localeCompare(a.date);
       case "name-asc":
         return a.name.localeCompare(b.name, "ja") || b.date.localeCompare(a.date);
+      case "store-asc":
+        return (
+          (a.store || "").localeCompare(b.store || "", "ja") ||
+          b.date.localeCompare(a.date) ||
+          a.name.localeCompare(b.name, "ja")
+        );
       case "date-desc":
       default:
         return b.date.localeCompare(a.date) || a.name.localeCompare(b.name, "ja");
@@ -957,6 +1380,7 @@
         .map((record) => ({
           id: record.id || makeId(),
           date: record.date || todayString(),
+          store: String(record.store || "").trim(),
           name: String(record.name || "").trim(),
           price: Math.max(0, Math.round(Number(record.price) || 0)),
           category: categoryById.has(record.category) ? record.category : "other",
@@ -985,9 +1409,10 @@
     }
 
     const rows = [
-      ["購入日", "分類", "購入品目名", "値段", "登録日時"],
+      ["購入日", "お店", "分類", "購入品目名", "値段", "登録日時"],
       ...state.records.map((record) => [
         record.date,
+        record.store || "",
         categoryById.get(record.category)?.label || "その他",
         record.name,
         String(record.price),
@@ -1039,6 +1464,7 @@
     const headers = rows[0].map((header) => normalizeText(header).trim());
     const indexes = {
       date: findHeader(headers, ["購入日", "日付", "date"]),
+      store: findHeader(headers, ["お店", "店名", "店舗", "store"]),
       category: findHeader(headers, ["分類", "カテゴリ", "category"]),
       name: findHeader(headers, ["購入品目名", "品目", "商品名", "name"]),
       price: findHeader(headers, ["値段", "金額", "price"]),
@@ -1054,6 +1480,7 @@
         return {
           id: makeId(),
           date: row[indexes.date] || todayString(),
+          store: String(row[indexes.store] || "").trim(),
           name,
           price,
           category,
@@ -1108,7 +1535,7 @@
     const index = headers.findIndex((header) =>
       names.some((name) => header.toLowerCase() === String(name).toLowerCase())
     );
-    return index >= 0 ? index : 0;
+    return index >= 0 ? index : -1;
   }
 
   function categoryFromLabel(value) {
@@ -1135,6 +1562,24 @@
       currency: "JPY",
       maximumFractionDigits: 0,
     }).format(Number(value) || 0);
+  }
+
+  function formatCompactYen(value) {
+    const amount = Number(value) || 0;
+    if (amount >= 10000) {
+      const compact = Math.round((amount / 10000) * 10) / 10;
+      return `${compact}万円`;
+    }
+    return `${Math.round(amount).toLocaleString("ja-JP")}円`;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   function formatDateLabel(value) {
