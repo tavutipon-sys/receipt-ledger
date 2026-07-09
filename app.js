@@ -164,6 +164,11 @@
   ];
 
   const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const recordTypes = [
+    { id: "expense", label: "支出", color: "#d9604c" },
+    { id: "income", label: "収入", color: "#16756f" },
+  ];
+  const recordTypeById = new Map(recordTypes.map((type) => [type.id, type]));
   const chartPalette = [
     "#16756f",
     "#d9604c",
@@ -215,6 +220,7 @@
       "parseTextButton",
       "clearScanButton",
       "manualEntryForm",
+      "manualType",
       "manualDate",
       "manualStore",
       "manualName",
@@ -225,6 +231,7 @@
       "savePendingButton",
       "visibleTotal",
       "summaryStrip",
+      "filterType",
       "filterFrom",
       "filterTo",
       "filterCategory",
@@ -240,11 +247,17 @@
       "pieChart",
       "pieLegend",
       "itemRanking",
+      "analyticsTab",
+      "ledgerTab",
+      "analyticsPanel",
+      "ledgerPanel",
     ].forEach((id) => {
       dom[id] = document.getElementById(id);
     });
 
     dom.cameraStage = document.querySelector(".camera-stage");
+    dom.viewTabs = Array.from(document.querySelectorAll("[data-view-tab]"));
+    dom.viewPanels = Array.from(document.querySelectorAll("[data-view-panel]"));
   }
 
   function bindEvents() {
@@ -265,6 +278,7 @@
     dom.ledgerList.addEventListener("click", removeRecordFromButton);
 
     [
+      dom.filterType,
       dom.filterFrom,
       dom.filterTo,
       dom.filterCategory,
@@ -276,6 +290,9 @@
     dom.trendMode.addEventListener("input", renderLedger);
     dom.trendYear.addEventListener("input", renderLedger);
     dom.pieMode.addEventListener("input", renderLedger);
+    dom.viewTabs.forEach((tab) => {
+      tab.addEventListener("click", () => setActiveView(tab.dataset.viewTab));
+    });
   }
 
   function populateCategorySelects() {
@@ -298,6 +315,22 @@
       option.value = category.id;
       option.textContent = category.label;
       select.appendChild(option);
+    });
+  }
+
+  function setActiveView(view) {
+    const activeView = view === "ledger" ? "ledger" : "analytics";
+
+    dom.viewTabs.forEach((tab) => {
+      const isActive = tab.dataset.viewTab === activeView;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", String(isActive));
+    });
+
+    dom.viewPanels.forEach((panel) => {
+      const isActive = panel.dataset.viewPanel === activeView;
+      panel.classList.toggle("is-active", isActive);
+      panel.hidden = !isActive;
     });
   }
 
@@ -479,6 +512,7 @@
 
   function addManualPending(event) {
     event.preventDefault();
+    const type = dom.manualType.value === "income" ? "income" : "expense";
     const store = dom.manualStore.value.trim();
     const name = dom.manualName.value.trim();
     const price = Number(dom.manualPrice.value);
@@ -490,6 +524,7 @@
 
     state.pending.push({
       id: makeId(),
+      type,
       date: dom.manualDate.value || todayString(),
       store,
       name,
@@ -515,6 +550,7 @@
       .filter((item) => item.name.trim() && Number(item.price) > 0)
       .map((item) => ({
         id: makeId(),
+        type: item.type === "income" ? "income" : "expense",
         date: item.date || todayString(),
         store: String(item.store || "").trim(),
         name: item.name.trim(),
@@ -581,6 +617,7 @@
 
     return {
       id: makeId(),
+      type: "expense",
       date,
       store,
       name,
@@ -716,7 +753,7 @@
   }
 
   function renderPending() {
-    dom.pendingTotal.textContent = formatYen(sumPrices(state.pending));
+    dom.pendingTotal.textContent = formatYen(sumSigned(state.pending));
     dom.savePendingButton.disabled = state.pending.length === 0;
     dom.pendingList.replaceChildren();
 
@@ -730,6 +767,7 @@
       row.className = "pending-row";
       row.dataset.id = item.id;
 
+      row.appendChild(createTypeSelect(item.type));
       row.appendChild(createInput("date", item.date, "date"));
       row.appendChild(createInput("store", item.store || "", "text"));
       row.appendChild(createInput("name", item.name, "text"));
@@ -745,8 +783,7 @@
 
   function renderLedger() {
     const visibleRecords = getVisibleRecords();
-    const total = sumPrices(visibleRecords);
-    dom.visibleTotal.textContent = formatYen(total);
+    dom.visibleTotal.textContent = formatYen(sumSigned(visibleRecords));
     renderSummary(visibleRecords);
     renderAnalytics(visibleRecords);
     renderLedgerRows(visibleRecords);
@@ -756,38 +793,39 @@
   function renderSummary(records) {
     dom.summaryStrip.replaceChildren();
 
+    const incomeTotal = sumPrices(records.filter(isIncome));
+    const expenseRecords = records.filter(isExpense);
+    const expenseTotal = sumPrices(expenseRecords);
+    const balance = incomeTotal - expenseTotal;
+
+    appendSummaryItem("収入", incomeTotal, "#16756f");
+    appendSummaryItem("支出", expenseTotal, "#d9604c");
+    appendSummaryItem("収支", balance, balance >= 0 ? "#2878a8" : "#c9851f");
+
     const totals = new Map(categories.map((category) => [category.id, 0]));
-    records.forEach((record) => {
+    expenseRecords.forEach((record) => {
       totals.set(record.category, (totals.get(record.category) || 0) + record.price);
     });
 
     categories
       .filter((category) => totals.get(category.id) > 0)
       .forEach((category) => {
-        const item = document.createElement("div");
-        item.className = "summary-item";
-        item.style.setProperty("--category-color", category.color);
-
-        const label = document.createElement("span");
-        label.textContent = category.label;
-        const value = document.createElement("strong");
-        value.textContent = formatYen(totals.get(category.id));
-
-        item.append(label, value);
-        dom.summaryStrip.appendChild(item);
+        appendSummaryItem(category.label, totals.get(category.id), category.color);
       });
+  }
 
-    if (!dom.summaryStrip.children.length) {
-      const item = document.createElement("div");
-      item.className = "summary-item";
-      item.style.setProperty("--category-color", "#707771");
-      const label = document.createElement("span");
-      label.textContent = "集計";
-      const value = document.createElement("strong");
-      value.textContent = "0円";
-      item.append(label, value);
-      dom.summaryStrip.appendChild(item);
-    }
+  function appendSummaryItem(labelText, amount, color) {
+    const item = document.createElement("div");
+    item.className = "summary-item";
+    item.style.setProperty("--category-color", color);
+
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const value = document.createElement("strong");
+    value.textContent = formatYen(amount);
+
+    item.append(label, value);
+    dom.summaryStrip.appendChild(item);
   }
 
   function renderAnalytics(records) {
@@ -827,25 +865,28 @@
   function renderTrendChart(records) {
     const mode = dom.trendMode.value;
     const buckets = mode === "yearly" ? buildYearlyBuckets(records) : buildMonthlyBuckets(records);
-    const total = buckets.reduce((sum, bucket) => sum + bucket.value, 0);
+    const balance = buckets.reduce((sum, bucket) => sum + bucket.income - bucket.expense, 0);
+    const incomeTotal = buckets.reduce((sum, bucket) => sum + bucket.income, 0);
+    const expenseTotal = buckets.reduce((sum, bucket) => sum + bucket.expense, 0);
     const cumulative = [];
 
     buckets.reduce((sum, bucket, index) => {
-      const next = sum + bucket.value;
+      const next = sum + bucket.income - bucket.expense;
       cumulative[index] = next;
       return next;
     }, 0);
 
-    dom.trendChartTotal.textContent = formatYen(total);
+    dom.trendChartTotal.textContent = `収支 ${formatYen(balance)}`;
 
-    if (!total) {
-      setEmptyChart(dom.trendChart, "表示できる支出がありません。");
+    if (!incomeTotal && !expenseTotal) {
+      setEmptyChart(dom.trendChart, "表示できる収入・支出がありません。");
       return;
     }
 
     dom.trendChart.innerHTML = buildTrendSvg(
       buckets.map((bucket) => bucket.label),
-      buckets.map((bucket) => bucket.value),
+      buckets.map((bucket) => bucket.income),
+      buckets.map((bucket) => bucket.expense),
       cumulative
     );
   }
@@ -855,14 +896,19 @@
     const values = Array.from({ length: 12 }, (_, index) => ({
       key: `${year}-${String(index + 1).padStart(2, "0")}`,
       label: `${index + 1}月`,
-      value: 0,
+      income: 0,
+      expense: 0,
     }));
 
     records.forEach((record) => {
       const month = String(record.date || "").slice(0, 7);
       const bucket = values.find((item) => item.key === month);
       if (bucket) {
-        bucket.value += Number(record.price) || 0;
+        if (isIncome(record)) {
+          bucket.income += Number(record.price) || 0;
+        } else {
+          bucket.expense += Number(record.price) || 0;
+        }
       }
     });
 
@@ -887,7 +933,8 @@
       buckets.push({
         key: String(year),
         label: `${year}`,
-        value: 0,
+        income: 0,
+        expense: 0,
       });
     }
 
@@ -895,14 +942,18 @@
       const year = String(record.date || "").slice(0, 4);
       const bucket = buckets.find((item) => item.key === year);
       if (bucket) {
-        bucket.value += Number(record.price) || 0;
+        if (isIncome(record)) {
+          bucket.income += Number(record.price) || 0;
+        } else {
+          bucket.expense += Number(record.price) || 0;
+        }
       }
     });
 
     return buckets;
   }
 
-  function buildTrendSvg(labels, values, cumulativeValues) {
+  function buildTrendSvg(labels, incomeValues, expenseValues, cumulativeValues) {
     const width = 760;
     const height = 320;
     const left = 58;
@@ -911,39 +962,49 @@
     const bottom = 46;
     const chartWidth = width - left - right;
     const chartHeight = height - top - bottom;
-    const maxBar = Math.max(...values, 1);
-    const maxLine = Math.max(...cumulativeValues, 1);
-    const slot = chartWidth / values.length;
-    const barWidth = Math.max(12, Math.min(34, slot * 0.56));
+    const maxPositive = Math.max(...incomeValues, ...expenseValues, ...cumulativeValues, 1);
+    const minValue = Math.min(0, ...cumulativeValues);
+    const range = Math.max(1, maxPositive - minValue);
+    const slot = chartWidth / incomeValues.length;
+    const barWidth = Math.max(7, Math.min(18, slot * 0.24));
+    const zeroY = valueToY(0);
+
+    function valueToY(value) {
+      return top + ((maxPositive - value) / range) * chartHeight;
+    }
 
     const grid = [0, 0.25, 0.5, 0.75, 1]
       .map((ratio) => {
-        const y = top + chartHeight - chartHeight * ratio;
-        const label = formatCompactYen(maxBar * ratio);
+        const value = minValue + range * ratio;
+        const y = valueToY(value);
+        const label = formatCompactYen(value);
         return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="#ded8ce" stroke-width="1"/><text x="${left - 8}" y="${y + 4}" text-anchor="end" fill="#646a60" font-size="12">${label}</text>`;
       })
       .join("");
 
-    const bars = values
-      .map((value, index) => {
-        const x = left + index * slot + (slot - barWidth) / 2;
-        const barHeight = (value / maxBar) * chartHeight;
-        const y = top + chartHeight - barHeight;
-        return `<rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(1, barHeight)}" rx="5" fill="#16756f"><title>${labels[index]} ${formatYen(value)}</title></rect>`;
+    const bars = incomeValues
+      .map((income, index) => {
+        const expense = expenseValues[index];
+        const center = left + index * slot + slot / 2;
+        const incomeY = valueToY(income);
+        const expenseY = valueToY(expense);
+        const incomeRect = `<rect x="${center - barWidth - 2}" y="${incomeY}" width="${barWidth}" height="${Math.max(1, zeroY - incomeY)}" rx="4" fill="#16756f"><title>${labels[index]} 収入 ${formatYen(income)}</title></rect>`;
+        const expenseRect = `<rect x="${center + 2}" y="${expenseY}" width="${barWidth}" height="${Math.max(1, zeroY - expenseY)}" rx="4" fill="#d9604c"><title>${labels[index]} 支出 ${formatYen(expense)}</title></rect>`;
+        return incomeRect + expenseRect;
       })
       .join("");
 
     const points = cumulativeValues.map((value, index) => {
       const x = left + index * slot + slot / 2;
-      const y = top + chartHeight - (value / maxLine) * chartHeight;
+      const y = valueToY(value);
       return { x, y, value };
     });
     const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-    const line = `<path d="${linePath}" fill="none" stroke="#d9604c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const line = `<path d="${linePath}" fill="none" stroke="#2878a8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
     const dots = points
       .map(
         (point, index) =>
-          `<circle cx="${point.x}" cy="${point.y}" r="4.5" fill="#fffdf8" stroke="#d9604c" stroke-width="3"><title>${labels[index]} 累計 ${formatYen(point.value)}</title></circle>`
+          `<circle cx="${point.x}" cy="${point.y}" r="4.5" fill="#fffdf8" stroke="#2878a8" stroke-width="3"><title>${labels[index]} 収支累計 ${formatYen(point.value)}</title></circle>`
       )
       .join("");
 
@@ -954,20 +1015,21 @@
       })
       .join("");
 
-    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="支出推移グラフ">
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="収支推移グラフ">
       <rect width="${width}" height="${height}" fill="transparent"/>
       ${grid}
       ${bars}
       ${line}
       ${dots}
-      <line x1="${left}" y1="${top + chartHeight}" x2="${width - right}" y2="${top + chartHeight}" stroke="#c9c0b4" stroke-width="1.5"/>
+      <line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" stroke="#c9c0b4" stroke-width="1.5"/>
       ${xLabels}
     </svg>`;
   }
 
   function renderPieChart(records) {
     const mode = dom.pieMode.value;
-    const aggregate = aggregateForPie(records, mode);
+    const expenseRecords = records.filter(isExpense);
+    const aggregate = aggregateForPie(expenseRecords, mode);
 
     dom.pieLegend.replaceChildren();
     if (!aggregate.length) {
@@ -1077,7 +1139,7 @@
 
   function renderItemRanking(records) {
     dom.itemRanking.replaceChildren();
-    const items = aggregateBy(records, (record) => String(record.name || "").trim()).slice(0, 8);
+    const items = aggregateBy(records.filter(isExpense), (record) => String(record.name || "").trim()).slice(0, 8);
     if (!items.length) {
       dom.itemRanking.appendChild(createEmptyState("表示できる品目がありません。"));
       return;
@@ -1138,7 +1200,7 @@
     dom.ledgerList.replaceChildren();
 
     if (records.length === 0) {
-      dom.ledgerList.appendChild(createEmptyState("保存した支出がここに表示されます。"));
+      dom.ledgerList.appendChild(createEmptyState("保存した収入・支出がここに表示されます。"));
       return;
     }
 
@@ -1155,6 +1217,7 @@
       row.className = "ledger-row";
       row.dataset.id = record.id;
 
+      row.appendChild(createTypeSelect(record.type));
       row.appendChild(createInput("date", record.date, "date"));
       row.appendChild(createInput("store", record.store || "", "text"));
       row.appendChild(createInput("name", record.name, "text"));
@@ -1175,7 +1238,7 @@
 
     const total = document.createElement("span");
     total.textContent = formatYen(
-      records.filter((record) => record.date === date).reduce((sum, record) => sum + record.price, 0)
+      records.filter((record) => record.date === date).reduce((sum, record) => sum + signedPrice(record), 0)
     );
 
     group.append(label, total);
@@ -1195,6 +1258,19 @@
     }
 
     return input;
+  }
+
+  function createTypeSelect(value) {
+    const select = document.createElement("select");
+    select.dataset.field = "type";
+    recordTypes.forEach((type) => {
+      const option = document.createElement("option");
+      option.value = type.id;
+      option.textContent = type.label;
+      select.appendChild(option);
+    });
+    select.value = value === "income" ? "income" : "expense";
+    return select;
   }
 
   function createCategorySelect(value) {
@@ -1243,7 +1319,7 @@
   }
 
   function renderPendingTotalsOnly() {
-    dom.pendingTotal.textContent = formatYen(sumPrices(state.pending));
+    dom.pendingTotal.textContent = formatYen(sumSigned(state.pending));
     dom.savePendingButton.disabled = state.pending.length === 0;
   }
 
@@ -1298,10 +1374,15 @@
       return categoryById.has(value) ? value : "other";
     }
 
+    if (field === "type") {
+      return value === "income" ? "income" : "expense";
+    }
+
     return String(value || "").trim();
   }
 
   function getVisibleRecords() {
+    const type = dom.filterType.value;
     const from = dom.filterFrom.value;
     const to = dom.filterTo.value;
     const category = dom.filterCategory.value;
@@ -1309,6 +1390,9 @@
     const sortMode = dom.sortMode.value;
 
     const filtered = state.records.filter((record) => {
+      if (type !== "all" && record.type !== type) {
+        return false;
+      }
       if (from && record.date < from) {
         return false;
       }
@@ -1360,6 +1444,7 @@
   }
 
   function resetFilters() {
+    dom.filterType.value = "all";
     dom.filterFrom.value = "";
     dom.filterTo.value = "";
     dom.filterCategory.value = "all";
@@ -1379,6 +1464,7 @@
       return parsed
         .map((record) => ({
           id: record.id || makeId(),
+          type: record.type === "income" ? "income" : "expense",
           date: record.date || todayString(),
           store: String(record.store || "").trim(),
           name: String(record.name || "").trim(),
@@ -1409,8 +1495,9 @@
     }
 
     const rows = [
-      ["購入日", "お店", "分類", "購入品目名", "値段", "登録日時"],
+      ["種別", "日付", "お店・相手", "分類", "内容", "金額", "登録日時"],
       ...state.records.map((record) => [
+        recordTypeById.get(record.type)?.label || "支出",
         record.date,
         record.store || "",
         categoryById.get(record.category)?.label || "その他",
@@ -1463,10 +1550,11 @@
 
     const headers = rows[0].map((header) => normalizeText(header).trim());
     const indexes = {
+      type: findHeader(headers, ["種別", "収支", "type"]),
       date: findHeader(headers, ["購入日", "日付", "date"]),
-      store: findHeader(headers, ["お店", "店名", "店舗", "store"]),
+      store: findHeader(headers, ["お店", "お店・相手", "店名", "店舗", "相手", "store"]),
       category: findHeader(headers, ["分類", "カテゴリ", "category"]),
-      name: findHeader(headers, ["購入品目名", "品目", "商品名", "name"]),
+      name: findHeader(headers, ["購入品目名", "内容", "品目", "商品名", "name"]),
       price: findHeader(headers, ["値段", "金額", "price"]),
       createdAt: findHeader(headers, ["登録日時", "createdAt"]),
     };
@@ -1479,6 +1567,7 @@
         const category = categoryFromLabel(String(row[indexes.category] || ""));
         return {
           id: makeId(),
+          type: typeFromLabel(String(row[indexes.type] || "")),
           date: row[indexes.date] || todayString(),
           store: String(row[indexes.store] || "").trim(),
           name,
@@ -1544,6 +1633,14 @@
     return match ? match.id : "other";
   }
 
+  function typeFromLabel(value) {
+    const normalized = normalizeText(value).trim().toLowerCase();
+    if (normalized === "income" || normalized === "収入" || normalized === "入金") {
+      return "income";
+    }
+    return "expense";
+  }
+
   function escapeCsv(value) {
     const text = String(value ?? "");
     if (/[",\r\n]/.test(text)) {
@@ -1554,6 +1651,23 @@
 
   function sumPrices(items) {
     return items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+  }
+
+  function isIncome(item) {
+    return item.type === "income";
+  }
+
+  function isExpense(item) {
+    return !isIncome(item);
+  }
+
+  function signedPrice(item) {
+    const price = Number(item.price) || 0;
+    return isIncome(item) ? price : -price;
+  }
+
+  function sumSigned(items) {
+    return items.reduce((sum, item) => sum + signedPrice(item), 0);
   }
 
   function formatYen(value) {

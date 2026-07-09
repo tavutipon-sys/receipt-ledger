@@ -435,7 +435,7 @@ p {
 }
 
 .pending-row {
-  grid-template-columns: 124px minmax(108px, 0.9fr) minmax(112px, 1fr) 88px 112px 38px;
+  grid-template-columns: 86px 124px minmax(108px, 0.9fr) minmax(112px, 1fr) 88px 112px 38px;
   padding: 8px;
 }
 
@@ -461,13 +461,46 @@ p {
   background: #c94d38;
 }
 
-.ledger-panel {
+.data-panel {
   margin-top: 16px;
+}
+
+.view-tabs {
+  display: inline-flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px;
+  background: rgba(255, 253, 248, 0.8);
+}
+
+.view-tab {
+  min-width: 112px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+}
+
+.view-tab:hover {
+  border-color: var(--line-strong);
+}
+
+.view-tab.is-active {
+  border-color: var(--primary);
+  color: #ffffff;
+  background: var(--primary);
+}
+
+.ledger-panel {
+  margin-top: 0;
   padding: 18px;
 }
 
 .analytics-panel {
-  margin-top: 16px;
+  margin-top: 0;
   padding: 18px;
 }
 
@@ -565,13 +598,17 @@ p {
 }
 
 .bar-swatch {
+  background: var(--accent);
+}
+
+.income-swatch {
   background: var(--primary);
 }
 
 .line-swatch {
   height: 3px;
   border-radius: 999px;
-  background: var(--accent);
+  background: #2878a8;
 }
 
 .pie-chart {
@@ -699,7 +736,7 @@ p {
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(128px, 1fr)) minmax(132px, 0.8fr) minmax(160px, 1.2fr) minmax(150px, 0.9fr) 44px;
+  grid-template-columns: minmax(100px, 0.7fr) repeat(2, minmax(128px, 1fr)) minmax(132px, 0.8fr) minmax(160px, 1.2fr) minmax(150px, 0.9fr) 44px;
   gap: 10px;
   align-items: end;
   margin-bottom: 14px;
@@ -711,7 +748,7 @@ p {
 }
 
 .ledger-row {
-  grid-template-columns: 118px minmax(130px, 0.85fr) minmax(160px, 1fr) 128px 112px 44px;
+  grid-template-columns: 86px 118px minmax(130px, 0.85fr) minmax(160px, 1fr) 128px 112px 44px;
   padding: 12px;
 }
 
@@ -856,8 +893,19 @@ p {
 
   .capture-panel,
   .entry-panel,
+  .analytics-panel,
   .ledger-panel {
     padding: 14px;
+  }
+
+  .view-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .view-tab {
+    min-width: 0;
   }
 
   .panel-heading,
