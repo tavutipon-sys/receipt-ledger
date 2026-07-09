@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>レシート家計簿</title>
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Receipt Ledger</p>
+          <h1>レシート家計簿</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" type="button" id="exportCsvButton" aria-label="CSVを書き出す" title="CSVを書き出す">
+            <i data-lucide="download"></i>
+          </button>
+          <label class="icon-button file-button" aria-label="CSVを取り込む" title="CSVを取り込む">
+            <i data-lucide="upload"></i>
+            <input id="importCsvInput" type="file" accept=".csv,text/csv">
+          </label>
+        </div>
+      </header>
+
+      <section class="workspace-grid" aria-label="レシート読み込みと家計簿">
+        <section class="capture-panel" aria-labelledby="captureTitle">
+          <div class="panel-heading">
+            <div>
+              <h2 id="captureTitle">レシート読取</h2>
+              <p>カメラ撮影または画像から文字を読み取ります。</p>
+            </div>
+            <span class="status-pill" id="ocrStatus">待機中</span>
+          </div>
+
+          <div class="camera-stage">
+            <video id="cameraPreview" autoplay playsinline muted></video>
+            <img id="receiptPreview" alt="取り込んだレシート画像">
+            <div class="empty-preview" id="emptyPreview">
+              <i data-lucide="scan-line"></i>
+              <span>レシート画像</span>
+            </div>
+          </div>
+
+          <div class="toolbar capture-toolbar" aria-label="読取操作">
+            <button type="button" id="startCameraButton">
+              <i data-lucide="camera"></i>
+              <span>カメラ</span>
+            </button>
+            <button type="button" id="captureButton" disabled>
+              <i data-lucide="aperture"></i>
+              <span>撮影</span>
+            </button>
+            <label class="button-like">
+              <i data-lucide="image-plus"></i>
+              <span>画像</span>
+              <input id="receiptImageInput" type="file" accept="image/*" capture="environment">
+            </label>
+            <button type="button" id="runOcrButton" disabled>
+              <i data-lucide="wand-sparkles"></i>
+              <span>読取</span>
+            </button>
+          </div>
+
+          <div class="ocr-meter" aria-hidden="true">
+            <span id="ocrMeterBar"></span>
+          </div>
+
+          <label class="field-label" for="ocrText">読取テキスト</label>
+          <textarea id="ocrText" rows="9" placeholder="OCR結果がここに入ります。うまく読めない箇所は直接直せます。"></textarea>
+          <div class="toolbar secondary-toolbar">
+            <button type="button" id="parseTextButton">
+              <i data-lucide="list-plus"></i>
+              <span>候補を作成</span>
+            </button>
+            <button type="button" id="clearScanButton">
+              <i data-lucide="eraser"></i>
+              <span>クリア</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="entry-panel" aria-labelledby="entryTitle">
+          <div class="panel-heading">
+            <div>
+              <h2 id="entryTitle">確認して登録</h2>
+              <p>日付、品目、値段、分類を確認します。</p>
+            </div>
+            <span class="total-chip" id="pendingTotal">0円</span>
+          </div>
+
+          <form id="manualEntryForm" class="manual-form">
+            <label>
+              <span>購入日</span>
+              <input id="manualDate" type="date" required>
+            </label>
+            <label>
+              <span>購入品目名</span>
+              <input id="manualName" type="text" autocomplete="off" placeholder="例: 牛乳">
+            </label>
+            <label>
+              <span>値段</span>
+              <input id="manualPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="198">
+            </label>
+            <label>
+              <span>分類</span>
+              <select id="manualCategory"></select>
+            </label>
+            <button type="submit">
+              <i data-lucide="plus"></i>
+              <span>追加</span>
+            </button>
+          </form>
+
+          <div class="pending-header">
+            <h3>登録候補</h3>
+            <button type="button" id="savePendingButton" disabled>
+              <i data-lucide="save"></i>
+              <span>保存</span>
+            </button>
+          </div>
+          <div class="pending-list" id="pendingList" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section class="ledger-panel" aria-labelledby="ledgerTitle">
+        <div class="panel-heading ledger-heading">
+          <div>
+            <h2 id="ledgerTitle">家計簿</h2>
+            <p>日ごと、分類別に絞り込み・並べ替えできます。</p>
+          </div>
+          <div class="ledger-total">
+            <span>表示合計</span>
+            <strong id="visibleTotal">0円</strong>
+          </div>
+        </div>
+
+        <div class="summary-strip" id="summaryStrip" aria-label="分類別集計"></div>
+
+        <div class="filters" aria-label="家計簿フィルター">
+          <label>
+            <span>開始日</span>
+            <input id="filterFrom" type="date">
+          </label>
+          <label>
+            <span>終了日</span>
+            <input id="filterTo" type="date">
+          </label>
+          <label>
+            <span>分類</span>
+            <select id="filterCategory"></select>
+          </label>
+          <label>
+            <span>検索</span>
+            <input id="filterKeyword" type="search" placeholder="品目名">
+          </label>
+          <label>
+            <span>並び順</span>
+            <select id="sortMode">
+              <option value="date-desc">日付 新しい順</option>
+              <option value="date-asc">日付 古い順</option>
+              <option value="category-asc">分類順</option>
+              <option value="price-desc">値段 高い順</option>
+              <option value="price-asc">値段 安い順</option>
+              <option value="name-asc">品目名順</option>
+            </select>
+          </label>
+          <button type="button" id="resetFiltersButton" aria-label="絞り込みをリセット" title="絞り込みをリセット">
+            <i data-lucide="rotate-ccw"></i>
+          </button>
+        </div>
+
+        <div class="ledger-list" id="ledgerList" aria-live="polite"></div>
+      </section>
+    </main>
+  </body>
+</html>
